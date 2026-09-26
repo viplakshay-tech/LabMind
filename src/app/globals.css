@@ -1,26 +1,183 @@
 @import "tailwindcss";
 
+@theme {
+  /* =========================
+     LABMIND COLORS
+     ========================= */
+
+  --color-void: #0B1326;
+  --color-void-lowest: #060E20;
+  --color-surface-low: #131B2E;
+  --color-surface: #171F33;
+  --color-surface-high: #222A3D;
+  --color-surface-highest: #2D3449;
+
+  --color-primary: #4CD7F6;
+  --color-primary-strong: #06B6D4;
+
+  --color-secondary: #B4C5FF;
+  --color-secondary-strong: #0053DB;
+
+  --color-tertiary: #DDB7FF;
+  --color-tertiary-strong: #C78DFF;
+
+  --color-success: #10B981;
+  --color-warning: #F59E0B;
+  --color-danger: #F43F5E;
+
+  /* =========================
+     LABMIND TYPOGRAPHY
+     ========================= */
+
+  --font-ui: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono-ui: var(--font-jetbrains-mono), ui-monospace, monospace;
+
+  /* =========================
+     LABMIND RADIUS
+     ========================= */
+
+  --radius-panel: 14px;
+  --radius-card: 12px;
+  --radius-control: 10px;
+
+  /* =========================
+     LABMIND SHADOWS
+     ========================= */
+
+  --shadow-panel: 0 10px 40px rgba(0, 0, 0, 0.18);
+
+  --shadow-glow-cyan:
+    0 0 24px rgba(76, 215, 246, 0.12);
+
+  --shadow-glow-violet:
+    0 0 24px rgba(200, 141, 255, 0.12);
+}
+
+/* =========================
+   BASE
+   ========================= */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  color-scheme: dark;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html,
+body {
+  min-height: 100%;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  margin: 0;
+  background: #0B1326;
+  color: #E7EDF7;
+  font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* =========================
+   TECHNICAL UI UTILITIES
+   ========================= */
+
+.lab-panel {
+  background: rgba(23, 31, 51, 0.86);
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 14px;
+  box-shadow: var(--shadow-panel);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.lab-panel-high {
+  background: rgba(34, 42, 61, 0.92);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 12px;
+}
+
+.lab-panel-low {
+  background: rgba(19, 27, 46, 0.82);
+  border: 1px solid rgba(148, 163, 184, 0.1);
+  border-radius: 12px;
+}
+
+.lab-mono {
+  font-family: var(--font-jetbrains-mono), ui-monospace, monospace;
+}
+
+.lab-glow-cyan {
+  box-shadow: var(--shadow-glow-cyan);
+}
+
+.lab-glow-violet {
+  box-shadow: var(--shadow-glow-violet);
+}
+
+.lab-grid {
+  background-image:
+    linear-gradient(
+      rgba(76, 215, 246, 0.035) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      90deg,
+      rgba(76, 215, 246, 0.035) 1px,
+      transparent 1px
+    );
+
+  background-size: 24px 24px;
+}
+
+/* =========================
+   SELECTION
+   ========================= */
+
+::selection {
+  background: rgba(76, 215, 246, 0.24);
+  color: white;
+}
+
+/* =========================
+   SCROLLBAR
+   ========================= */
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #060E20;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #2D3449;
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #42506D;
+}
+
+/* =========================
+   FOCUS
+   ========================= */
+
+:focus-visible {
+  outline: 2px solid #4CD7F6;
+  outline-offset: 2px;
+}
+
+/* =========================
+   REDUCED MOTION
+   ========================= */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
