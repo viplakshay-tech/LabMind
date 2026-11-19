@@ -89,84 +89,111 @@ export default function VisionInspector() {
     setError("");
   };
 
-  const analyzeImage = async () => {
-    if (!file || !selectedExperiment) {
-      setError("Please select an experiment and upload an image first.");
-      return;
+const analyzeImage = async () => {
+  if (!file) {
+    setError("Please select an image first.");
+    return;
+  }
+
+  setLoading(true);
+  setError("");
+  setAnalysis("");
+
+  try {
+    const dataUrl = await readFileAsDataUrl(file);
+
+    if (!dataUrl || !dataUrl.trim()) {
+      throw new Error("Unable to read the selected image.");
     }
 
-    setLoading(true);
-    setError("");
-    setAnalysis("");
+    const mimeType =
+      file.type ||
+      dataUrl.match(/^data:([^;]+);base64,/i)?.[1] ||
+      "image/jpeg";
 
-    try {
-      const imageDataUrl = await readFileAsDataUrl(file);
+    const experimentPayload = selectedExperiment
+      ? {
+          id: selectedExperiment.id,
+          code: selectedExperiment.code,
+          title: selectedExperiment.title,
+          shortTitle: selectedExperiment.shortTitle,
+          category: selectedExperiment.category,
+          objective: selectedExperiment.objective,
+          theory: selectedExperiment.theory,
+          apparatus: selectedExperiment.apparatus,
+          booleanEquations:
+            selectedExperiment.booleanEquations,
+          commonMistakes:
+            selectedExperiment.commonMistakes,
+          learningObjectives:
+            selectedExperiment.learningObjectives,
+        }
+      : null;
 
-      const commaIndex = imageDataUrl.indexOf(",");
+    console.log("Vision request payload:", {
+      hasImageData: Boolean(dataUrl),
+      mimeType,
+      hasExperiment: Boolean(experimentPayload),
+      imageSize: dataUrl.length,
+    });
 
-      if (commaIndex === -1) {
-        throw new Error("Unable to prepare the image for analysis.");
-      }
+    const response = await fetch("/api/vision", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        imageData: dataUrl,
+        dataUrl,
+        base64: dataUrl,
+        mimeType,
+        imageMimeType: mimeType,
 
-      const imageBase64 = imageDataUrl.slice(commaIndex + 1);
+        experiment: experimentPayload,
+        experimentContext: experimentPayload,
+        experimentId: selectedExperiment?.id ?? null,
+      }),
+    });
 
-      const response = await fetch("/api/vision", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          imageBase64,
-          mimeType: file.type,
-          experimentContext: {
-            id: selectedExperiment.id,
-            code: selectedExperiment.code,
-            title: selectedExperiment.title,
-            objective: selectedExperiment.objective,
-            theory: selectedExperiment.theory,
-            apparatus: selectedExperiment.apparatus,
-            commonMistakes: selectedExperiment.commonMistakes,
-          },
-        }),
-      });
+    const data = await response.json().catch(() => null);
 
-      const data = await response.json();
+    console.log("Vision API response:", data);
 
-      console.log("Vision API response:", data);
-
-      if (!response.ok) {
-        throw new Error(
-          data?.error || `Request failed with status ${response.status}`,
-        );
-      }
-
-      const aiResponse =
-        data?.response ??
-        data?.text ??
-        data?.message ??
-        data?.answer;
-
-      if (
-        typeof aiResponse !== "string" ||
-        aiResponse.trim().length === 0
-      ) {
-        throw new Error("The AI returned an empty analysis.");
-      }
-
-      setAnalysis(aiResponse);
-    } catch (err) {
-      console.error("Vision Inspector error:", err);
-
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Unable to analyze the uploaded image.",
+    if (!response.ok) {
+      throw new Error(
+        data?.error ||
+          `Request failed with status ${response.status}`,
       );
-    } finally {
-      setLoading(false);
     }
-  };
 
+    const aiResponse =
+      typeof data?.analysis === "string"
+        ? data.analysis.trim()
+        : typeof data?.response === "string"
+          ? data.response.trim()
+          : typeof data?.reply === "string"
+            ? data.reply.trim()
+            : "";
+
+    if (!aiResponse) {
+      throw new Error(
+        "The AI returned an empty analysis.",
+      );
+    }
+
+    setAnalysis(aiResponse);
+  } catch (err) {
+    console.error("Vision Inspector error:", err);
+
+    setError(
+      err instanceof Error
+        ? err.message
+        : "Unable to analyze the image.",
+    );
+  } finally {
+    setLoading(false);
+  }
+};
   return (
     <section className="lab-grid min-h-[calc(100vh-4rem)] p-4 md:p-6 lg:p-8">
       <div className="mx-auto max-w-7xl">

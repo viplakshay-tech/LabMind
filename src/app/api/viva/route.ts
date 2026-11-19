@@ -1,7 +1,12 @@
 import { GoogleGenAI } from "@google/genai";
 import { NextResponse } from "next/server";
 
-const MODEL = "gemini-3.8-flash";
+const PRIMARY_MODEL = "gemini-3.8-flash";
+const FALLBACK_MODELS = [
+  "gemini-3.7-flash",
+  "gemini-3.6-flash",
+  "gemini-2.5-flash",
+];
 
 type VivaAction = "generate" | "evaluate";
 
@@ -9,21 +14,149 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function getErrorStatus(error: unknown) {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "status" in error
+  ) {
+    const status = Number(
+      (error as { status?: unknown }).status,
+    );
+
+    return Number.isFinite(status)
+      ? status
+      : undefined;
+  }
+
+  return undefined;
+}
+
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error
+  ) {
+    return String(
+      (error as { message?: unknown }).message,
+    );
+  }
+
+  return String(error);
+}
+
+function getJsonSchema(action: VivaAction) {
+  if (action === "generate") {
+    return {
+      type: "object",
+      properties: {
+        question: {
+          type: "string",
+        },
+        topic: {
+          type: "string",
+        },
+        difficulty: {
+          type: "string",
+          enum: [
+            "easy",
+            "medium",
+            "hard",
+          ],
+        },
+        expectedConcept: {
+          type: "string",
+        },
+      },
+      required: [
+        "question",
+        "topic",
+        "difficulty",
+        "expectedConcept",
+      ],
+    };
+  }
+
+  return {
+    type: "object",
+    properties: {
+      score: {
+        type: "number",
+      },
+      maxScore: {
+        type: "number",
+      },
+      correct: {
+        type: "boolean",
+      },
+      feedback: {
+        type: "string",
+      },
+      missingConcepts: {
+        type: "array",
+        items: {
+          type: "string",
+        },
+      },
+      idealAnswer: {
+        type: "string",
+      },
+      nextDifficulty: {
+        type: "string",
+        enum: [
+          "easy",
+          "medium",
+          "hard",
+        ],
+      },
+    },
+    required: [
+      "score",
+      "maxScore",
+      "correct",
+      "feedback",
+      "missingConcepts",
+      "idealAnswer",
+      "nextDifficulty",
+    ],
+  };
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
 
-    const action = body?.action as VivaAction;
-    const experimentContext = body?.experimentContext;
-    const difficulty = body?.difficulty ?? "medium";
-    const previousQuestion = body?.previousQuestion ?? "";
-    const studentAnswer = body?.studentAnswer ?? "";
-    const questionNumber = body?.questionNumber ?? 1;
+    const action =
+      body?.action as VivaAction;
 
-    if (action !== "generate" && action !== "evaluate") {
+    const experimentContext =
+      body?.experimentContext;
+
+    const difficulty =
+      body?.difficulty ?? "medium";
+
+    const previousQuestion =
+      body?.previousQuestion ?? "";
+
+    const studentAnswer =
+      body?.studentAnswer ?? "";
+
+    const questionNumber =
+      body?.questionNumber ?? 1;
+
+    if (
+      action !== "generate" &&
+      action !== "evaluate"
+    ) {
       return NextResponse.json(
         {
-          error: "Invalid viva action.",
+          error:
+            "Invalid viva action.",
         },
         { status: 400 },
       );
@@ -32,27 +165,34 @@ export async function POST(request: Request) {
     if (!experimentContext) {
       return NextResponse.json(
         {
-          error: "Experiment context is required.",
+          error:
+            "Experiment context is required.",
         },
         { status: 400 },
       );
     }
 
-    if (action === "evaluate" && !studentAnswer.trim()) {
+    if (
+      action === "evaluate" &&
+      !studentAnswer.trim()
+    ) {
       return NextResponse.json(
         {
-          error: "Student answer is required.",
+          error:
+            "Student answer is required.",
         },
         { status: 400 },
       );
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey =
+      process.env.GEMINI_API_KEY;
 
     if (!apiKey) {
       return NextResponse.json(
         {
-          error: "GEMINI_API_KEY is not configured.",
+          error:
+            "GEMINI_API_KEY is not configured.",
         },
         { status: 500 },
       );
@@ -62,7 +202,11 @@ export async function POST(request: Request) {
       apiKey,
     });
 
-    const context = JSON.stringify(experimentContext, null, 2);
+    const context = JSON.stringify(
+      experimentContext,
+      null,
+      2,
+    );
 
     let prompt = "";
 
@@ -97,14 +241,7 @@ For medium and hard questions, prefer:
 
 Avoid repeating the previous question.
 
-Return ONLY valid JSON in exactly this structure:
-
-{
-  "question": "string",
-  "topic": "string",
-  "difficulty": "easy | medium | hard",
-  "expectedConcept": "string"
-}
+Return a single question specifically grounded in the supplied experiment context.
 `;
     } else {
       prompt = `
@@ -123,18 +260,6 @@ ${studentAnswer}
 
 Evaluate the answer based on conceptual correctness for this experiment.
 
-Return ONLY valid JSON in exactly this structure:
-
-{
-  "score": 0,
-  "maxScore": 10,
-  "correct": true,
-  "feedback": "short explanation",
-  "missingConcepts": ["string"],
-  "idealAnswer": "string",
-  "nextDifficulty": "easy | medium | hard"
-}
-
 Scoring guidance:
 0-2 = incorrect or largely unrelated
 3-4 = major conceptual gaps
@@ -147,84 +272,192 @@ Focus on understanding.
 `;
     }
 
-    let lastError: unknown = null;
+    const modelsToTry = [
+      PRIMARY_MODEL,
+      ...FALLBACK_MODELS,
+    ];
 
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        console.log(
-          `Viva Gemini request: ${action}, attempt ${attempt + 1}`,
-        );
+    const errors: Array<{
+      model: string;
+      status?: number;
+      message: string;
+    }> = [];
 
-        const response = await ai.models.generateContent({
-          model: MODEL,
-          contents: prompt,
-        });
-
-        const text = response.text?.trim();
-
-        if (!text) {
-          lastError = new Error("Gemini returned an empty response.");
-          continue;
-        }
-
-        let parsed: unknown;
-
+    for (
+      const model of modelsToTry
+    ) {
+      for (
+        let attempt = 0;
+        attempt < 2;
+        attempt++
+      ) {
         try {
-          parsed = JSON.parse(text);
-        } catch {
-          const cleaned = text
-            .replace(/^```json\s*/i, "")
-            .replace(/^```\s*/i, "")
-            .replace(/\s*```$/i, "")
-            .trim();
+          console.log(
+            `Viva Gemini request: action=${action}, model=${model}, attempt=${attempt + 1}`,
+          );
 
-          parsed = JSON.parse(cleaned);
-        }
+          const response =
+            await ai.models.generateContent(
+              {
+                model,
+                contents: prompt,
+                config: {
+                  responseMimeType:
+                    "application/json",
+                  responseSchema:
+                    getJsonSchema(action),
+                  maxOutputTokens: 1200,
+                },
+              },
+            );
 
-        return NextResponse.json({
-          result: parsed,
-          model: MODEL,
-        });
-      } catch (error: unknown) {
-        lastError = error;
+          const text =
+            response.text?.trim();
 
-        console.error(
-          `Viva Gemini error on attempt ${attempt + 1}:`,
-          error,
-        );
+          if (!text) {
+            throw new Error(
+              "Gemini returned an empty response.",
+            );
+          }
 
-        const status =
-          typeof error === "object" &&
-          error !== null &&
-          "status" in error
-            ? Number((error as { status?: unknown }).status)
-            : undefined;
+          let parsed: unknown;
 
-        if (status !== 429 && status !== 503) {
+          try {
+            parsed = JSON.parse(text);
+          } catch (parseError) {
+            console.error(
+              `Viva JSON parse failed for ${model}:`,
+              text,
+            );
+
+            throw new Error(
+              `Gemini returned invalid JSON: ${getErrorMessage(parseError)}`,
+            );
+          }
+
+          return NextResponse.json({
+            result: parsed,
+            model,
+          });
+        } catch (error: unknown) {
+          const status =
+            getErrorStatus(error);
+
+          const message =
+            getErrorMessage(error);
+
+          errors.push({
+            model,
+            status,
+            message,
+          });
+
+          console.error(
+            `Viva Gemini error: model=${model}, attempt=${attempt + 1}, status=${status ?? "unknown"}`,
+            error,
+          );
+
+          /*
+           * Retry rate limiting and temporary service errors.
+           */
+          if (
+            status === 429 ||
+            status === 500 ||
+            status === 502 ||
+            status === 503 ||
+            status === 504
+          ) {
+            if (attempt === 0) {
+              await sleep(750);
+              continue;
+            }
+
+            break;
+          }
+
+          /*
+           * Authentication, invalid request, invalid model,
+           * safety or other deterministic errors should not
+           * be retried twice against the same model.
+           */
           break;
-        }
-
-        if (attempt < 2) {
-          await sleep(1000 * 2 ** attempt);
         }
       }
     }
 
-    console.error("Viva API failed:", lastError);
+    const primaryError =
+      errors.find(
+        (entry) =>
+          entry.model === PRIMARY_MODEL,
+      );
+
+    const anyRateLimit =
+      errors.some(
+        (entry) =>
+          entry.status === 429,
+      );
+
+    const anyTemporaryError =
+      errors.some(
+        (entry) =>
+          entry.status === 500 ||
+          entry.status === 502 ||
+          entry.status === 503 ||
+          entry.status === 504,
+      );
+
+    console.error(
+      "All Viva Gemini models failed:",
+      errors,
+    );
+
+    /*
+     * Return useful diagnostics to the frontend instead of
+     * incorrectly labelling every failure as "Gemini unavailable".
+     */
+    let publicMessage =
+      "The viva AI request could not be completed.";
+
+    if (anyRateLimit) {
+      publicMessage =
+        "Gemini rate limit reached. Please retry in a moment.";
+    } else if (primaryError?.status === 401) {
+      publicMessage =
+        "Gemini API authentication failed. Check GEMINI_API_KEY.";
+    } else if (
+      primaryError?.status === 403
+    ) {
+      publicMessage =
+        "Gemini API access was denied. Check the API key/project permissions.";
+    } else if (anyTemporaryError) {
+      publicMessage =
+        "Gemini is temporarily unavailable. A fallback model was also tried.";
+    } else if (errors.length > 0) {
+      publicMessage =
+        `Viva AI request failed: ${errors[0].message}`;
+    }
 
     return NextResponse.json(
       {
-        error:
-          "Gemini is temporarily unavailable for the viva. Please try again.",
+        error: publicMessage,
+        details:
+          process.env.NODE_ENV ===
+          "development"
+            ? errors
+            : undefined,
       },
       { status: 503 },
     );
   } catch (error) {
-    console.error("Viva route error:", error);
+    console.error(
+      "Viva route error:",
+      error,
+    );
 
     return NextResponse.json(
       {
-        error: "Failed to process the viva request.",
+        error:
+          "Failed to process the viva request.",
       },
       { status: 500 },
     );

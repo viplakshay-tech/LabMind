@@ -19,6 +19,7 @@ import { experiments } from "@/data/experimentsData";
 import { saveLabReport } from "@/lib/database";
 
 export default function LabReportGenerator() {
+  
   const [experimentId, setExperimentId] = useState(
     experiments[0]?.id ?? "",
   );

@@ -1,224 +1,465 @@
-import { GoogleGenAI } from "@google/genai";
+
 import { NextResponse } from "next/server";
 
-const MODEL = "gemini-3.8-flash";
+export const runtime = "nodejs";
 
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+const PRIMARY_MODEL = "gemini-3.6-flash";
+
+const FALLBACK_MODELS = [
+  "gemini-3.8-flash",
+  "gemini-3.7-flash",
+  "gemini-2.5-flash",
+  "gemini-3.5-flash-lite",
+];
+
+const sleep = (ms: number) =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return "Unknown Gemini API error.";
+  }
+}
+
+function extractText(payload: unknown): string {
+  if (!payload || typeof payload !== "object") return "";
+
+  const root = payload as Record<string, unknown>;
+  const candidates = root.candidates;
+
+  if (!Array.isArray(candidates) || candidates.length === 0) {
+    return "";
+  }
+
+  const firstCandidate = candidates[0];
+
+  if (!firstCandidate || typeof firstCandidate !== "object") {
+    return "";
+  }
+
+  const content = (firstCandidate as Record<string, unknown>).content;
+
+  if (!content || typeof content !== "object") {
+    return "";
+  }
+
+  const parts = (content as Record<string, unknown>).parts;
+
+  if (!Array.isArray(parts)) {
+    return "";
+  }
+
+  return parts
+    .map((part) => {
+      if (!part || typeof part !== "object") return "";
+
+      const text = (part as Record<string, unknown>).text;
+
+      return typeof text === "string" ? text : "";
+    })
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+}
+
+function classifyFailure(status: number | null): string {
+  if (status === 401 || status === 403) {
+    return "Gemini API authentication failed. Check GEMINI_API_KEY and its API permissions.";
+  }
+
+  if (status === 429) {
+    return "Gemini rate limit or quota was reached. A fallback model was also attempted.";
+  }
+
+  if (status === 404) {
+    return "The configured Gemini report model is unavailable for this API project.";
+  }
+
+  if (
+    status === 500 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504
+  ) {
+    return "Gemini is temporarily unavailable. A fallback model was also attempted.";
+  }
+
+  return `Gemini report request failed${status ? ` with HTTP ${status}` : ""}.`;
+}
+
+async function resolveExperiment(
+  body: Record<string, unknown>,
+  request: Request,
+): Promise<Record<string, unknown> | null> {
+  const direct = [
+    body.experiment,
+    body.experimentContext,
+  ];
+
+  for (const candidate of direct) {
+    if (
+      candidate &&
+      typeof candidate === "object"
+    ) {
+      return candidate as Record<string, unknown>;
+    }
+  }
+
+  const ids: string[] = [];
+
+  if (
+    typeof body.experimentId === "string" &&
+    body.experimentId.trim()
+  ) {
+    ids.push(body.experimentId.trim());
+  }
+
+  const context =
+    body.context &&
+    typeof body.context === "object"
+      ? (body.context as Record<string, unknown>)
+      : null;
+
+  if (
+    context &&
+    typeof context.experimentId === "string" &&
+    context.experimentId.trim()
+  ) {
+    ids.push(context.experimentId.trim());
+  }
+
+  const referer =
+    request.headers.get("referer") ?? "";
+
+  const match = referer.match(
+    /\/experiments\/([^/?#]+)(?:\/workspace)?(?:[/?#]|$)/i,
+  );
+
+  if (match?.[1]) {
+    ids.push(decodeURIComponent(match[1]));
+  }
+
+  const uniqueIds = [...new Set(ids)];
+
+  if (uniqueIds.length === 0) {
+    return null;
+  }
+
+  try {
+    const module =
+      (await import("@/data/experimentsData")) as Record<string, unknown>;
+
+    const experiments = Array.isArray(module.experiments)
+      ? module.experiments
+      : Array.isArray(module.default)
+        ? module.default
+        : [];
+
+    const resolved = experiments.find((item) => {
+      if (!item || typeof item !== "object") {
+        return false;
+      }
+
+      const record = item as Record<string, unknown>;
+
+      return (
+        typeof record.id === "string" &&
+        uniqueIds.includes(record.id)
+      );
+    });
+
+    return resolved &&
+      typeof resolved === "object"
+      ? (resolved as Record<string, unknown>)
+      : null;
+  } catch (error) {
+    console.warn(
+      "Unable to resolve report experiment:",
+      error,
+    );
+
+    return null;
+  }
 }
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
+    const body =
+      (await request.json()) as Record<string, unknown>;
 
-    const experimentContext = body?.experimentContext;
-    const labState = body?.labState;
-    const diagnosticResult = body?.diagnosticResult;
-    const vivaSummary = body?.vivaSummary;
-    const studentName = body?.studentName ?? "Student";
+    const experiment =
+      await resolveExperiment(body, request);
 
-    if (!experimentContext) {
+    if (!experiment) {
       return NextResponse.json(
-        { error: "Experiment context is required." },
+        {
+          error:
+            "Experiment context is required. Select an experiment before generating the report.",
+        },
         { status: 400 },
       );
     }
 
-    if (!labState) {
-      return NextResponse.json(
-        { error: "Lab state is required." },
-        { status: 400 },
-      );
-    }
+    const labState =
+      body.labState ??
+      body.state ??
+      body.experimentState ??
+      {};
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey =
+      process.env.GEMINI_API_KEY?.trim();
 
     if (!apiKey) {
       return NextResponse.json(
-        { error: "GEMINI_API_KEY is not configured." },
+        {
+          error:
+            "GEMINI_API_KEY is not configured. Add it to .env.local and restart Next.js.",
+        },
         { status: 500 },
       );
     }
 
-    const ai = new GoogleGenAI({
-      apiKey,
-    });
+    const safeExperiment = {
+      id: experiment.id ?? null,
+      code: experiment.code ?? null,
+      title: experiment.title ?? null,
+      category: experiment.category ?? null,
+      objective: experiment.objective ?? null,
+      theory: experiment.theory ?? null,
+      apparatus:
+        experiment.apparatus ??
+        experiment.components ??
+        null,
+      booleanEquations:
+        experiment.booleanEquations ??
+        experiment.equations ??
+        null,
+      commonMistakes:
+        experiment.commonMistakes ?? null,
+      learningObjectives:
+        experiment.learningObjectives ??
+        null,
+    };
 
     const reportPrompt = `
-You are LabMind Report Generator, an AI assistant that creates structured
-engineering laboratory reports for B.Tech students.
+You are LabMind Report Generator, an AI assistant that creates structured engineering laboratory reports for B.Tech students.
 
 Create a professional laboratory report using ONLY the supplied information.
 
-STUDENT:
-${studentName}
+IMPORTANT RULES:
+- Never invent experimental readings.
+- Never invent observed outputs.
+- Clearly distinguish expected values from observed values.
+- If information is unavailable, write "Not recorded".
+- Keep the report technically accurate.
+- Use the supplied experiment context as the primary source.
+- Treat AI diagnostic information as supporting information, not experimental truth.
 
 EXPERIMENT CONTEXT:
-${JSON.stringify(experimentContext, null, 2)}
+${JSON.stringify(safeExperiment, null, 2)}
 
-LAB STATE:
+RECORDED LAB STATE:
 ${JSON.stringify(labState, null, 2)}
-
-DIAGNOSTIC RESULT:
-${JSON.stringify(diagnosticResult ?? null, null, 2)}
-
-VIVA SUMMARY:
-${JSON.stringify(vivaSummary ?? null, null, 2)}
-
-IMPORTANT:
-- Do not invent measurements, observations, components, readings, or results.
-- Clearly distinguish calculated/expected values from observed values.
-- If a piece of information is unavailable, write "Not recorded".
-- Keep the report technically accurate and suitable for a B.Tech engineering laboratory.
-- Use clean Markdown.
-- Keep sections clearly separated.
-- Do not write one large paragraph.
 
 Use this structure:
 
 # Laboratory Experiment Report
 
-## 1. Student Details
+## 1. Experiment Title
 
-Student:
-Experiment:
-Experiment Code:
-
-## 2. Aim / Objective
-
-State the experiment objective.
+## 2. Objective
 
 ## 3. Theory
 
-Explain the relevant theory in a concise engineering-student-friendly manner.
-
 ## 4. Apparatus / Components
-
-List the available apparatus and components from the supplied experiment context.
 
 ## 5. Circuit / Experimental Setup
 
-Describe the setup using only information supplied in the context.
-
 ## 6. Procedure
 
-Give a numbered procedure based only on the supplied experiment information.
-Do not invent physical steps that are not supported.
+## 7. Expected Results
 
-## 7. Input and Output Conditions
-
-Show the current input state and expected/observed outputs.
-
-Use a Markdown table where appropriate.
-
-## 8. Results and Observations
-
-Clearly distinguish expected results from observed results.
+## 8. Observed Results
 
 ## 9. Error / Fault Analysis
 
-If diagnostic information is supplied, summarize the detected mismatch,
-possible fault, and recommended checks.
-
-If no fault exists, state that the recorded state is nominal.
-
 ## 10. AI-Assisted Analysis
-
-Summarize the supplied diagnostic or AI analysis without inventing new evidence.
 
 ## 11. Viva Performance
 
-If viva information is supplied, summarize the score and important concepts
-to improve. Otherwise write "Not recorded".
-
 ## 12. Conclusion
 
-Give a concise conclusion based strictly on the supplied experiment state
-and results.
+## 13. Learning Outcomes
 
-## 13. Learning Notes
-
-Provide a few concise learning points derived from the experiment context.
-
-Formatting rules:
-- Use Markdown headings.
+Rules:
 - Use bullet points for lists.
 - Use numbered lists for procedures.
-- Use Markdown tables where useful.
 - Use **bold** for important values.
-- Use inline code for Boolean expressions.
-- Keep paragraphs short.
-- Do not mention that you are an AI unless specifically necessary.
-`;
+- Clearly distinguish expected and observed outputs.
+- Do not add information that is not present in the supplied context.
+`.trim();
 
-    let lastError: unknown = null;
+    const failures: Array<{
+      model: string;
+      status: number | null;
+      message: string;
+    }> = [];
 
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        console.log(
-          `Lab Report Gemini request, attempt ${attempt + 1}`,
-        );
+    const models = [
+      PRIMARY_MODEL,
+      ...FALLBACK_MODELS,
+    ];
 
-        const response = await ai.models.generateContent({
-          model: MODEL,
-          contents: reportPrompt,
-        });
-
-        const report = response.text?.trim();
-
-        if (!report) {
-          lastError = new Error(
-            "Gemini returned an empty laboratory report.",
+    for (const model of models) {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          console.log(
+            `Lab Report Gemini request: model=${model}, attempt=${attempt + 1}`,
           );
-          continue;
+
+          const response = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "x-goog-api-key": apiKey,
+              },
+              body: JSON.stringify({
+                contents: [
+                  {
+                    role: "user",
+                    parts: [
+                      {
+                        text: reportPrompt,
+                      },
+                    ],
+                  },
+                ],
+                generationConfig: {
+                  temperature: 0.3,
+                  topP: 0.9,
+                  maxOutputTokens: 2200,
+                },
+              }),
+              cache: "no-store",
+            },
+          );
+
+          // IMPORTANT:
+          // response.text is a function.
+          // We must parse the response body.
+          const payload = await response
+            .json()
+            .catch(() => null);
+
+          const report =
+            extractText(payload);
+
+          if (response.ok && report) {
+            console.log(
+              `Lab report generated successfully using ${model}.`,
+            );
+
+            return NextResponse.json({
+              report,
+              model,
+            });
+          }
+
+          const apiMessage =
+            payload &&
+            typeof payload === "object"
+              ? JSON.stringify(payload)
+              : `HTTP ${response.status}`;
+
+          failures.push({
+            model,
+            status: response.status,
+            message: apiMessage,
+          });
+
+          console.error(
+            `Lab Report Gemini failed: model=${model}, attempt=${attempt + 1}, status=${response.status}`,
+            payload,
+          );
+
+          if (
+            response.status === 401 ||
+            response.status === 403
+          ) {
+            break;
+          }
+
+          if (
+            response.status !== 404 &&
+            response.status !== 429 &&
+            response.status !== 500 &&
+            response.status !== 502 &&
+            response.status !== 503 &&
+            response.status !== 504
+          ) {
+            break;
+          }
+        } catch (error) {
+          failures.push({
+            model,
+            status: null,
+            message: getErrorMessage(error),
+          });
+
+          console.error(
+            `Lab Report request exception: model=${model}, attempt=${attempt + 1}`,
+            error,
+          );
         }
 
-        console.log("Lab report generated successfully.");
-
-        return NextResponse.json({
-          report,
-          model: MODEL,
-        });
-      } catch (error: unknown) {
-        lastError = error;
-
-        console.error(
-          `Lab Report Gemini error on attempt ${attempt + 1}:`,
-          error,
-        );
-
-        const status =
-          typeof error === "object" &&
-          error !== null &&
-          "status" in error
-            ? Number((error as { status?: unknown }).status)
-            : undefined;
-
-        if (status !== 429 && status !== 503) {
-          break;
-        }
-
-        if (attempt < 2) {
-          await sleep(1000 * 2 ** attempt);
+        if (attempt === 0) {
+          await sleep(1000);
         }
       }
     }
 
-    console.error("Lab Report API failed:", lastError);
+    const lastFailure =
+      failures[failures.length - 1];
+
+    return NextResponse.json(
+      {
+        error: classifyFailure(
+          lastFailure?.status ?? null,
+        ),
+        details:
+          process.env.NODE_ENV === "development"
+            ? failures
+            : undefined,
+      },
+      {
+        status:
+          lastFailure?.status &&
+          lastFailure.status >= 400
+            ? lastFailure.status
+            : 503,
+      },
+    );
+  } catch (error) {
+    console.error(
+      "Lab Report route error:",
+      error,
+    );
 
     return NextResponse.json(
       {
         error:
-          "Gemini is temporarily unavailable for report generation. Please try again.",
-      },
-      { status: 503 },
-    );
-  } catch (error) {
-    console.error("Lab Report route error:", error);
-
-    return NextResponse.json(
-      {
-        error: "Failed to generate the laboratory report.",
+          "Failed to generate the laboratory report.",
+        details:
+          process.env.NODE_ENV === "development"
+            ? getErrorMessage(error)
+            : undefined,
       },
       { status: 500 },
     );

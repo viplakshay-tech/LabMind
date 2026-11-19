@@ -898,6 +898,496 @@ function MultiplexerScene({
   );
 }
 
+/* ================================================================== */
+/*  EXPERIMENT SCENE 5: 1:4 DEMULTIPLEXER                              */
+/* ================================================================== */
+function DemultiplexerScene({
+  inputs,
+  outputs,
+  onToggle,
+}: {
+  inputs: Record<string, number>;
+  outputs: Record<string, number>;
+  onToggle: (name: string) => void;
+}) {
+  const data = inputs.D ?? 0;
+  const s1 = inputs.S1 ?? 0;
+  const s0 = inputs.S0 ?? 0;
+  const outputNames = ["Y0", "Y1", "Y2", "Y3"];
+
+  return (
+    <>
+      <SceneTitle>1:4 DEMULTIPLEXER · VIRTUAL HARDWARE LAB</SceneTitle>
+      <VirtualBreadboard />
+      <RailMarker position={[-2.5, 0.16, -1.02]} text="+5V" color="#fca5a5" />
+      <RailMarker position={[-2.5, 0.16, 1.02]} text="GND" color="#93c5fd" />
+
+      <VirtualSwitch
+        position={[-2.2, 0.55, -1.18]}
+        value={data}
+        label={`D = ${data}`}
+        onToggle={() => onToggle("D")}
+      />
+      <VirtualSwitch
+        position={[-1.15, 0.55, -1.18]}
+        value={s1}
+        label={`S1 = ${s1}`}
+        onToggle={() => onToggle("S1")}
+      />
+      <VirtualSwitch
+        position={[-0.2, 0.55, -1.18]}
+        value={s0}
+        label={`S0 = ${s0}`}
+        onToggle={() => onToggle("S0")}
+      />
+
+      <VirtualResistor position={[-1.75, 0.42, -0.52]} label="220Ω" active={data === 1} />
+      <VirtualResistor position={[-0.7, 0.42, -0.52]} label="220Ω" active={s1 === 1} />
+      <VirtualResistor position={[0.25, 0.42, -0.52]} label="220Ω" active={s0 === 1} />
+
+      <VirtualDipIc
+        position={[0.65, 0.55, 0.12]}
+        partNumber="7400"
+        description="NAND DECODE / ROUTING"
+      />
+      <VirtualDipIc
+        position={[0.65, 0.55, 0.78]}
+        partNumber="7404"
+        description="SELECT LINE INVERSION"
+      />
+
+      <SignalWire
+        start={[-1.95, 0.55, -0.98]}
+        end={[-0.05, 0.55, 0.0]}
+        active={data === 1}
+        color="#ef4444"
+      />
+      <SignalWire
+        start={[-0.9, 0.55, -0.98]}
+        end={[0.1, 0.55, 0.35]}
+        active={s1 === 1}
+        color="#a855f7"
+      />
+      <SignalWire
+        start={[0.05, 0.55, -0.98]}
+        end={[0.2, 0.55, 0.62]}
+        active={s0 === 1}
+        color="#ec4899"
+      />
+
+      {outputNames.map((name, index) => {
+        const y = -0.72 + index * 0.48;
+        const value = outputs[name] ?? 0;
+        return (
+          <group key={name}>
+            <SignalWire
+              start={[1.4, 0.55, 0.12]}
+              end={[1.68, 0.55, y]}
+              active={value === 1}
+              color={["#22c55e", "#eab308", "#f97316", "#a855f7"][index]}
+            />
+            <VirtualResistor
+              position={[1.72, 0.48, y]}
+              label="220Ω"
+              active={value === 1}
+            />
+            <VirtualLed
+              position={[2.12, 0.6, y]}
+              active={value === 1}
+              label={`${name} = ${value}`}
+            />
+          </group>
+        );
+      })}
+
+      <Text
+        position={[-2.05, 0.18, 1.0]}
+        rotation={[-Math.PI / 2, 0, 0]}
+        fontSize={0.07}
+        color="#64748b"
+        anchorX="left"
+        anchorY="middle"
+      >
+        DATA + SELECT
+      </Text>
+      <Text
+        position={[1.45, 0.18, 1.0]}
+        rotation={[-Math.PI / 2, 0, 0]}
+        fontSize={0.07}
+        color="#64748b"
+        anchorX="left"
+        anchorY="middle"
+      >
+        ONE ACTIVE OUTPUT
+      </Text>
+    </>
+  );
+}
+
+/* ================================================================== */
+/*  EXPERIMENT SCENE 6: 2:4 DECODER                                    */
+/* ================================================================== */
+function DecoderScene({
+  inputs,
+  outputs,
+  onToggle,
+}: {
+  inputs: Record<string, number>;
+  outputs: Record<string, number>;
+  onToggle: (name: string) => void;
+}) {
+  const a1 = inputs.A1 ?? 0;
+  const a0 = inputs.A0 ?? 0;
+  const en = inputs.EN ?? 0;
+  const outputNames = ["Y0", "Y1", "Y2", "Y3"];
+
+  return (
+    <>
+      <SceneTitle>2:4 DECODER · VIRTUAL HARDWARE LAB</SceneTitle>
+      <VirtualBreadboard />
+      <RailMarker position={[-2.5, 0.16, -1.02]} text="+5V" color="#fca5a5" />
+      <RailMarker position={[-2.5, 0.16, 1.02]} text="GND" color="#93c5fd" />
+
+      <VirtualSwitch
+        position={[-2.05, 0.55, -1.18]}
+        value={a1}
+        label={`A1 = ${a1}`}
+        onToggle={() => onToggle("A1")}
+      />
+      <VirtualSwitch
+        position={[-1.05, 0.55, -1.18]}
+        value={a0}
+        label={`A0 = ${a0}`}
+        onToggle={() => onToggle("A0")}
+      />
+      <VirtualResistor position={[-1.65, 0.42, -0.52]} label="220Ω" active={a1 === 1} />
+      <VirtualResistor position={[-0.7, 0.42, -0.52]} label="220Ω" active={a0 === 1} />
+      <VirtualSwitch
+        position={[-0.05, 0.55, -1.18]}
+        value={en}
+        label={`EN = ${en}`}
+        onToggle={() => onToggle("EN")}
+      />
+
+      <VirtualDipIc
+        position={[0.0, 0.55, -0.28]}
+        partNumber="7404"
+        description="INPUT INVERTER"
+      />
+      <VirtualDipIc
+        position={[0.0, 0.55, 0.65]}
+        partNumber="7408"
+        description="OUTPUT DECODE LOGIC"
+      />
+
+      <SignalWire
+        start={[-1.78, 0.55, -0.98]}
+        end={[-0.72, 0.55, -0.2]}
+        active={a1 === 1}
+        color="#ef4444"
+      />
+      <SignalWire
+        start={[-0.82, 0.55, -0.98]}
+        end={[-0.32, 0.55, 0.42]}
+        active={a0 === 1}
+        color="#3b82f6"
+      />
+      <VirtualWire
+        start={[-0.72, 0.48, -0.2]}
+        end={[-0.72, 0.48, 0.62]}
+        active={a1 === 1}
+      />
+      <VirtualWire
+        start={[-0.32, 0.48, 0.42]}
+        end={[-0.32, 0.48, 1.0]}
+        active={a0 === 1}
+      />
+
+      {outputNames.map((name, index) => {
+        const value = outputs[name] ?? 0;
+        const y = -0.72 + index * 0.48;
+        return (
+          <group key={name}>
+            <SignalWire
+              start={[0.78, 0.55, 0.65]}
+              end={[1.55, 0.55, y]}
+              active={value === 1}
+              color={["#22c55e", "#eab308", "#f97316", "#a855f7"][index]}
+            />
+            <VirtualResistor
+              position={[1.65, 0.48, y]}
+              label="220Ω"
+              active={value === 1}
+            />
+            <VirtualLed
+              position={[2.05, 0.6, y]}
+              active={value === 1}
+              label={`${name} = ${value}`}
+            />
+          </group>
+        );
+      })}
+
+      <Text
+        position={[-1.9, 0.18, 1.0]}
+        rotation={[-Math.PI / 2, 0, 0]}
+        fontSize={0.07}
+        color="#64748b"
+        anchorX="left"
+        anchorY="middle"
+      >
+        A1 / A0 ADDRESS
+      </Text>
+      <Text
+        position={[1.45, 0.18, 1.0]}
+        rotation={[-Math.PI / 2, 0, 0]}
+        fontSize={0.07}
+        color="#64748b"
+        anchorX="left"
+        anchorY="middle"
+      >
+        ONE-HOT OUTPUT
+      </Text>
+    </>
+  );
+}
+
+/* ================================================================== */
+/*  EXPERIMENT SCENE 7: 4:2 ENCODER                                    */
+/* ================================================================== */
+function EncoderScene({
+  inputs,
+  outputs,
+  onToggle,
+}: {
+  inputs: Record<string, number>;
+  outputs: Record<string, number>;
+  onToggle: (name: string) => void;
+}) {
+  const inputNames = ["I0", "I1", "I2", "I3"];
+  const outputNames = ["A1", "A0"];
+
+  return (
+    <>
+      <SceneTitle>4:2 ENCODER · VIRTUAL HARDWARE LAB</SceneTitle>
+      <VirtualBreadboard />
+      <RailMarker position={[-2.5, 0.16, -1.02]} text="+5V" color="#fca5a5" />
+      <RailMarker position={[-2.5, 0.16, 1.02]} text="GND" color="#93c5fd" />
+
+      {inputNames.map((name, index) => {
+        const value = inputs[name] ?? 0;
+        return (
+          <group key={name}>
+            <VirtualSwitch
+              position={[-2.1, 0.55, -0.82 + index * 0.55]}
+              value={value}
+              label={`${name} = ${value}`}
+              onToggle={() => onToggle(name)}
+            />
+            <VirtualResistor
+              position={[-1.65, 0.42, -0.42 + index * 0.55]}
+              label="220Ω"
+              active={value === 1}
+            />
+            <SignalWire
+              start={[-1.8, 0.55, -0.76 + index * 0.55]}
+              end={[-0.4, 0.55, -0.55 + index * 0.36]}
+              active={value === 1}
+              color={["#ef4444", "#3b82f6", "#22c55e", "#eab308"][index]}
+            />
+          </group>
+        );
+      })}
+
+      <VirtualDipIc
+        position={[0.25, 0.55, -0.15]}
+        partNumber="7432"
+        description="OR COMBINATION LOGIC"
+      />
+      <VirtualDipIc
+        position={[0.25, 0.55, 0.72]}
+        partNumber="7404"
+        description="ENCODE / INVERT PATH"
+      />
+
+      {outputNames.map((name, index) => {
+        const value = outputs[name] ?? 0;
+        const y = index === 0 ? -0.15 : 0.72;
+        return (
+          <group key={name}>
+            <SignalWire
+              start={[0.98, 0.55, y]}
+              end={[1.55, 0.55, y]}
+              active={value === 1}
+              color={index === 0 ? "#a855f7" : "#ec4899"}
+            />
+            <VirtualResistor
+              position={[1.62, 0.48, y]}
+              label="220Ω"
+              active={value === 1}
+            />
+            <VirtualLed
+              position={[2.02, 0.6, y]}
+              active={value === 1}
+              label={`${name} = ${value}`}
+            />
+          </group>
+        );
+      })}
+
+      <Text
+        position={[-2.0, 0.18, 1.0]}
+        rotation={[-Math.PI / 2, 0, 0]}
+        fontSize={0.07}
+        color="#64748b"
+        anchorX="left"
+        anchorY="middle"
+      >
+        ONE-HOT INPUTS
+      </Text>
+      <Text
+        position={[1.35, 0.18, 1.0]}
+        rotation={[-Math.PI / 2, 0, 0]}
+        fontSize={0.07}
+        color="#64748b"
+        anchorX="left"
+        anchorY="middle"
+      >
+        2-BIT CODE
+      </Text>
+    </>
+  );
+}
+
+/* ================================================================== */
+/*  EXPERIMENT SCENE 8: SR FLIP-FLOP                                   */
+/* ================================================================== */
+function SrFlipFlopScene({
+  inputs,
+  outputs,
+  onToggle,
+}: {
+  inputs: Record<string, number>;
+  outputs: Record<string, number>;
+  onToggle: (name: string) => void;
+}) {
+  const s = inputs.S ?? 0;
+  const r = inputs.R ?? 0;
+  const q = outputs.Q ?? 0;
+  const qbar = outputs.Qbar ?? 0;
+
+  return (
+    <>
+      <SceneTitle>SR FLIP-FLOP · VIRTUAL HARDWARE LAB</SceneTitle>
+      <VirtualBreadboard />
+      <RailMarker position={[-2.5, 0.16, -1.02]} text="+5V" color="#fca5a5" />
+      <RailMarker position={[-2.5, 0.16, 1.02]} text="GND" color="#93c5fd" />
+
+      <VirtualSwitch
+        position={[-2.0, 0.55, -0.95]}
+        value={s}
+        label={`S = ${s}`}
+        onToggle={() => onToggle("S")}
+      />
+      <VirtualSwitch
+        position={[-1.0, 0.55, 0.85]}
+        value={r}
+        label={`R = ${r}`}
+        onToggle={() => onToggle("R")}
+      />
+
+      <VirtualResistor position={[-1.5, 0.42, -0.45]} label="220Ω" active={s === 1} />
+      <VirtualResistor position={[-0.55, 0.42, 0.45]} label="220Ω" active={r === 1} />
+
+      <VirtualDipIc
+        position={[0.1, 0.55, -0.42]}
+        partNumber="7400"
+        description="NAND LATCH · Q"
+      />
+      <VirtualDipIc
+        position={[0.1, 0.55, 0.55]}
+        partNumber="7400"
+        description="NAND LATCH · QBAR"
+      />
+
+      <SignalWire
+        start={[-1.8, 0.55, -0.78]}
+        end={[-0.55, 0.55, -0.32]}
+        active={s === 1}
+        color="#ef4444"
+      />
+      <SignalWire
+        start={[-0.82, 0.55, 0.72]}
+        end={[-0.55, 0.55, 0.52]}
+        active={r === 1}
+        color="#3b82f6"
+      />
+
+      {/* Cross-coupled feedback paths */}
+      <SignalWire
+        start={[0.84, 0.55, -0.42]}
+        end={[-0.28, 0.55, 0.38]}
+        active={q === 1}
+        color="#22c55e"
+      />
+      <SignalWire
+        start={[0.84, 0.55, 0.55]}
+        end={[-0.28, 0.55, -0.25]}
+        active={qbar === 1}
+        color="#a855f7"
+      />
+
+      <SignalWire
+        start={[0.84, 0.55, -0.42]}
+        end={[1.45, 0.55, -0.42]}
+        active={q === 1}
+        color="#22c55e"
+      />
+      <SignalWire
+        start={[0.84, 0.55, 0.55]}
+        end={[1.45, 0.55, 0.55]}
+        active={qbar === 1}
+        color="#a855f7"
+      />
+
+      <VirtualResistor position={[1.5, 0.48, -0.42]} label="220Ω" active={q === 1} />
+      <VirtualResistor position={[1.5, 0.48, 0.55]} label="220Ω" active={qbar === 1} />
+
+      <VirtualLed
+        position={[1.95, 0.6, -0.42]}
+        active={q === 1}
+        label={`Q = ${q}`}
+      />
+      <VirtualLed
+        position={[1.95, 0.6, 0.55]}
+        active={qbar === 1}
+        label={`QBAR = ${qbar}`}
+      />
+
+      <Text
+        position={[-1.95, 0.18, 1.0]}
+        rotation={[-Math.PI / 2, 0, 0]}
+        fontSize={0.07}
+        color="#64748b"
+        anchorX="left"
+        anchorY="middle"
+      >
+        SET / RESET
+      </Text>
+      <Text
+        position={[0.95, 0.18, 1.0]}
+        rotation={[-Math.PI / 2, 0, 0]}
+        fontSize={0.07}
+        color="#64748b"
+        anchorX="left"
+        anchorY="middle"
+      >
+        CROSS-COUPLED LATCH
+      </Text>
+    </>
+  );
+}
+
 /* ------------------------------------------------------------------ */
 /*  Workbench Surface beneath the Breadboard                          */
 /* ------------------------------------------------------------------ */
@@ -975,6 +1465,38 @@ function CircuitScene({
 
       {experimentId === "4-1-multiplexer" && (
         <MultiplexerScene
+          inputs={inputs}
+          outputs={outputs}
+          onToggle={onToggle}
+        />
+      )}
+
+      {experimentId === "1-4-demultiplexer" && (
+        <DemultiplexerScene
+          inputs={inputs}
+          outputs={outputs}
+          onToggle={onToggle}
+        />
+      )}
+
+      {experimentId === "2-4-decoder" && (
+        <DecoderScene
+          inputs={inputs}
+          outputs={outputs}
+          onToggle={onToggle}
+        />
+      )}
+
+      {experimentId === "4-2-encoder" && (
+        <EncoderScene
+          inputs={inputs}
+          outputs={outputs}
+          onToggle={onToggle}
+        />
+      )}
+
+      {experimentId === "sr-flip-flop" && (
+        <SrFlipFlopScene
           inputs={inputs}
           outputs={outputs}
           onToggle={onToggle}

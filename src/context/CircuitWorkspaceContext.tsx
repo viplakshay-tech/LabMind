@@ -11,6 +11,7 @@ import {
 
 import {
   computeExpectedOutputs,
+  computeNextSrState,
   computeObservedOutputs,
   defaultInputsForExperiment,
   isWorkspaceExperimentId,
@@ -63,8 +64,11 @@ function circuitWorkspaceReducer(
 ): CircuitWorkspaceState {
   switch (action.type) {
     case "INIT": {
-      const inputs = action.inputs;
+      const inputs = {
+        ...action.inputs,
+      };
       const faults: ActiveFault[] = [];
+
       return {
         experiment: action.experiment,
         inputs,
@@ -72,42 +76,65 @@ function circuitWorkspaceReducer(
         ...recompute(action.experiment, inputs, faults),
       };
     }
+
     case "SET_INPUT": {
       const inputs = {
         ...state.inputs,
         [action.name]: action.value === 1 ? 1 : 0,
       };
+
+      if (
+        state.experiment?.id === "sr-flip-flop" &&
+        (action.name === "S" || action.name === "R")
+      ) {
+        const currentQ = state.inputs.__Q === 1 ? 1 : 0;
+        const s = inputs.S === 1 ? 1 : 0;
+        const r = inputs.R === 1 ? 1 : 0;
+
+        inputs.__Q = computeNextSrState(currentQ, s, r);
+      }
+
       return {
         ...state,
         inputs,
         ...recompute(state.experiment, inputs, state.faults),
       };
     }
+
     case "TOGGLE_FAULT": {
       const exists = state.faults.some(
         (f) => f.id === action.fault.id,
       );
+
       const faults = exists
         ? state.faults.filter((f) => f.id !== action.fault.id)
         : [...state.faults, action.fault];
+
       return {
         ...state,
         faults,
         ...recompute(state.experiment, state.inputs, faults),
       };
     }
+
     case "CLEAR_FAULTS":
       return {
         ...state,
         faults: [],
         ...recompute(state.experiment, state.inputs, []),
       };
+
     case "RESET": {
-      if (!state.experiment || !isWorkspaceExperimentId(state.experiment.id)) {
+      if (
+        !state.experiment ||
+        !isWorkspaceExperimentId(state.experiment.id)
+      ) {
         return state;
       }
+
       const inputs = defaultInputsForExperiment(state.experiment.id);
       const faults: ActiveFault[] = [];
+
       return {
         ...state,
         inputs,
@@ -115,6 +142,7 @@ function circuitWorkspaceReducer(
         ...recompute(state.experiment, inputs, faults),
       };
     }
+
     default:
       return state;
   }
@@ -142,33 +170,49 @@ export function CircuitWorkspaceProvider({
   experiment,
   children,
 }: CircuitWorkspaceProviderProps) {
-  const [state, dispatch] = useReducer(circuitWorkspaceReducer, undefined, () => {
-    const base = createInitialState();
-    if (!isWorkspaceExperimentId(experiment.id)) {
-      return { ...base, experiment };
-    }
-    const inputs = defaultInputsForExperiment(experiment.id);
-    return {
-      experiment,
-      inputs,
-      faults: [],
-      ...recompute(experiment, inputs, []),
-    };
-  });
+  const [state, dispatch] = useReducer(
+    circuitWorkspaceReducer,
+    undefined,
+    () => {
+      const base = createInitialState();
+
+      if (!isWorkspaceExperimentId(experiment.id)) {
+        return { ...base, experiment };
+      }
+
+      const inputs = defaultInputsForExperiment(experiment.id);
+
+      return {
+        experiment,
+        inputs,
+        faults: [],
+        ...recompute(experiment, inputs, []),
+      };
+    },
+  );
 
   const inputNames = experiment.truthTableSpec.inputs;
   const outputNames = experiment.truthTableSpec.outputs;
 
   const setInput = useCallback((name: string, value: number) => {
-    dispatch({ type: "SET_INPUT", name, value });
+    dispatch({
+      type: "SET_INPUT",
+      name,
+      value,
+    });
   }, []);
 
   const toggleFault = useCallback((fault: ActiveFault) => {
-    dispatch({ type: "TOGGLE_FAULT", fault });
+    dispatch({
+      type: "TOGGLE_FAULT",
+      fault,
+    });
   }, []);
 
   const reset = useCallback(() => {
-    dispatch({ type: "RESET" });
+    dispatch({
+      type: "RESET",
+    });
   }, []);
 
   const allOutputsPass = useMemo(
@@ -235,10 +279,12 @@ export function CircuitWorkspaceProvider({
 
 export function useCircuitWorkspace(): CircuitWorkspaceContextValue {
   const ctx = useContext(CircuitWorkspaceContext);
+
   if (!ctx) {
     throw new Error(
       "useCircuitWorkspace must be used within CircuitWorkspaceProvider",
     );
   }
+
   return ctx;
 }

@@ -130,6 +130,7 @@ export async function getDemoStudent(): Promise<StudentRecord | null> {
     .from("students")
     .select("*")
     .eq("email", "demo@labmind.local")
+    .limit(1)
     .maybeSingle();
 
   if (error) {
@@ -160,6 +161,61 @@ export async function getStoredExperiments(): Promise<
   return data ?? [];
 }
 
+async function resolveExperimentId(experimentId: string): Promise<string> {
+  const requestedId = experimentId.trim();
+
+  if (!requestedId) {
+    throw new Error("Experiment ID is required.");
+  }
+
+  const aliases: Record<string, string> = {
+    "4-1-multiplexer": "multiplexer-4to1",
+  };
+
+  // Exact ID first, then alias, so the requested ID always wins.
+  const candidates = Array.from(
+    new Set([requestedId, aliases[requestedId]].filter(Boolean)),
+  ) as string[];
+
+  for (const candidate of candidates) {
+    const { data, error } = await supabase
+      .from("experiments")
+      .select("id")
+      .eq("id", candidate)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(
+        `Failed to resolve experiment "${requestedId}": ${error.message}`,
+      );
+    }
+
+    if (data?.id) {
+      return data.id;
+    }
+  }
+
+  const { data: codeMatch, error: codeLookupError } = await supabase
+    .from("experiments")
+    .select("id")
+    .eq("code", requestedId)
+    .maybeSingle();
+
+  if (codeLookupError) {
+    throw new Error(
+      `Failed to resolve experiment code "${requestedId}": ${codeLookupError.message}`,
+    );
+  }
+
+  if (codeMatch?.id) {
+    return codeMatch.id;
+  }
+
+  throw new Error(
+    `Experiment "${requestedId}" does not exist in public.experiments.`,
+  );
+}
+
 /* --------------------------------------------------
    EXPERIMENT SESSIONS
 -------------------------------------------------- */
@@ -177,6 +233,8 @@ export async function saveExperimentSession({
   observedOutputs: Record<string, number>;
   notes?: string;
 }): Promise<ExperimentSessionRecord> {
+  const resolvedExperimentId = await resolveExperimentId(experimentId);
+
   const student = await getDemoStudent();
 
   if (!student) {
@@ -191,7 +249,7 @@ export async function saveExperimentSession({
     .from("experiment_sessions")
     .insert({
       student_id: student.id,
-      experiment_id: experimentId,
+      experiment_id: resolvedExperimentId,
       inputs,
       expected_outputs: expectedOutputs,
       observed_outputs: observedOutputs,
@@ -241,6 +299,8 @@ export async function saveDiagnosticSession({
   checklist: unknown[];
   aiAnalysis?: string | null;
 }): Promise<DiagnosticSessionRecord> {
+  const resolvedExperimentId = await resolveExperimentId(experimentId);
+
   const student = await getDemoStudent();
 
   if (!student) {
@@ -251,7 +311,7 @@ export async function saveDiagnosticSession({
     .from("diagnostic_sessions")
     .insert({
       student_id: student.id,
-      experiment_id: experimentId,
+      experiment_id: resolvedExperimentId,
       stimulus_vector: stimulusVector,
       expected_outputs: expectedOutputs,
       observed_outputs: observedOutputs,
@@ -306,6 +366,8 @@ export async function saveVivaSession({
   missingConcepts: string[];
   idealAnswer: string;
 }): Promise<VivaSessionRecord> {
+  const resolvedExperimentId = await resolveExperimentId(experimentId);
+
   const student = await getDemoStudent();
 
   if (!student) {
@@ -316,7 +378,7 @@ export async function saveVivaSession({
     .from("viva_sessions")
     .insert({
       student_id: student.id,
-      experiment_id: experimentId,
+      experiment_id: resolvedExperimentId,
       question_number: questionNumber,
       question,
       answer,
@@ -356,6 +418,8 @@ export async function saveLabReport({
   contentMarkdown: string;
   metadata?: Record<string, unknown>;
 }): Promise<LabReportRecord> {
+  const resolvedExperimentId = await resolveExperimentId(experimentId);
+
   const student = await getDemoStudent();
 
   if (!student) {
@@ -366,7 +430,7 @@ export async function saveLabReport({
     .from("lab_reports")
     .insert({
       student_id: student.id,
-      experiment_id: experimentId,
+      experiment_id: resolvedExperimentId,
       title,
       content_markdown: contentMarkdown,
       metadata: metadata ?? {},
@@ -401,29 +465,60 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     };
   }
 
-  const { data, error } = await supabase
-    .from("experiment_sessions")
-    .select("*")
-    .eq("student_id", student.id)
-    .order("started_at", { ascending: false })
-    .limit(50);
+  const [recentResponse, totalResponse, completedResponse, faultResponse] =
+    await Promise.all([
+      supabase
+        .from("experiment_sessions")
+        .select("*")
+        .eq("student_id", student.id)
+        .order("started_at", { ascending: false })
+        .limit(50),
 
-  if (error) {
+      supabase
+        .from("experiment_sessions")
+        .select("*", { count: "exact", head: true })
+        .eq("student_id", student.id),
+
+      supabase
+        .from("experiment_sessions")
+        .select("*", { count: "exact", head: true })
+        .eq("student_id", student.id)
+        .eq("status", "completed"),
+
+      supabase
+        .from("experiment_sessions")
+        .select("*", { count: "exact", head: true })
+        .eq("student_id", student.id)
+        .eq("status", "fault"),
+    ]);
+
+  if (recentResponse.error) {
     throw new Error(
-      `Failed to load dashboard data: ${error.message}`,
+      `Failed to load dashboard data: ${recentResponse.error.message}`,
     );
   }
 
-  const sessions = (data ?? []) as ExperimentSessionRecord[];
+  if (totalResponse.error) {
+    throw new Error(
+      `Failed to load dashboard totals: ${totalResponse.error.message}`,
+    );
+  }
 
-  const completedSessions = sessions.filter(
-    (session) => session.status === "completed",
-  ).length;
+  if (completedResponse.error) {
+    throw new Error(
+      `Failed to load completed session count: ${completedResponse.error.message}`,
+    );
+  }
 
-  const faultSessions = sessions.filter(
-    (session) => session.status === "fault",
-  ).length;
+  if (faultResponse.error) {
+    throw new Error(
+      `Failed to load fault session count: ${faultResponse.error.message}`,
+    );
+  }
 
+  const sessions = (recentResponse.data ?? []) as ExperimentSessionRecord[];
+
+  // Average score is based on the most recent 50 sessions.
   const scoredSessions = sessions.filter(
     (session) => typeof session.score === "number",
   );
@@ -440,9 +535,9 @@ export async function getDashboardStats(): Promise<DashboardStats> {
 
   return {
     student,
-    totalSessions: sessions.length,
-    completedSessions,
-    faultSessions,
+    totalSessions: totalResponse.count ?? 0,
+    completedSessions: completedResponse.count ?? 0,
+    faultSessions: faultResponse.count ?? 0,
     averageScore,
     recentSessions: sessions.slice(0, 5),
   };
@@ -670,7 +765,7 @@ export async function getAnalyticsStats(): Promise<AnalyticsStats> {
 
   const resolvedDiagnostics = diagnosticSessions.filter(
     (session) =>
-      session.overall_status === "PASS",
+      session.overall_status?.trim().toUpperCase() === "PASS",
   ).length;
 
   const diagnosticSuccessRate =
@@ -723,26 +818,31 @@ export async function getAnalyticsStats(): Promise<AnalyticsStats> {
   const circuitAnalysis =
     experimentSessions.length > 0
       ? Math.round(
-          experimentSessions.filter(
+          (experimentSessions.filter(
             (session) => session.status === "completed",
           ).length /
-            experimentSessions.length *
+            experimentSessions.length) *
             100,
         )
       : 0;
 
   const troubleshooting = diagnosticSuccessRate;
   const vivaReadiness = averageVivaScore;
-
   const labProcedure = experimentCompletion;
 
-  const availableSkillValues = [
-    digitalLogic,
-    circuitAnalysis,
-    troubleshooting,
-    vivaReadiness,
-    labProcedure,
-  ].filter((value) => value > 0);
+  // A skill counts toward mastery only if there is data behind it,
+  // so a real 0% is included but "never attempted" is not.
+  const skillEntries: Array<{ value: number; hasData: boolean }> = [
+    { value: digitalLogic, hasData: experimentSessions.length > 0 },
+    { value: circuitAnalysis, hasData: experimentSessions.length > 0 },
+    { value: troubleshooting, hasData: diagnosticSessions.length > 0 },
+    { value: vivaReadiness, hasData: vivaScores.length > 0 },
+    { value: labProcedure, hasData: experiments.length > 0 },
+  ];
+
+  const availableSkillValues = skillEntries
+    .filter((entry) => entry.hasData)
+    .map((entry) => entry.value);
 
   const overallMastery =
     availableSkillValues.length > 0
